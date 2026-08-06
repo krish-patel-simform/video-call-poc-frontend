@@ -8,8 +8,7 @@ import { TrustBadges } from "../components/TrustBadges";
 import { MeetingCardMockup } from "../components/MeetingCardMockup";
 import { FeatureHighlights } from "../components/FeatureHighlights";
 import { httpService } from "../services/httpService";
-import { useSocket } from "../hooks/useSocket";
-import type { SocketCallbackResponse } from "../types/socket.type";
+import { useNavigate } from "react-router";
 
 export default function Home() {
   const [email, setEmail] = useState("");
@@ -18,7 +17,7 @@ export default function Home() {
   const [errorMsg, setErrorMsg] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
 
-  const { socket } = useSocket();
+  const navigate = useNavigate();
 
   const generateRoomId = async () => {
     setIsGenerating(true);
@@ -64,15 +63,8 @@ export default function Home() {
     }
     setErrorMsg("");
 
-    socket.emit(
-      "join-room",
-      { roomId, email },
-      (response: SocketCallbackResponse) => {
-        if (response.success) {
-          console.log("User joined the room successfully");
-        }
-      },
-    );
+    // Pass the email in the route state so RoomPage can use it
+    navigate(`/room/${roomId}`, { state: { email } });
   };
 
   return (
@@ -93,7 +85,6 @@ export default function Home() {
 
       {/* Main Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-12 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center z-10">
-        {/* Left Column: Form & Hero Intro */}
         <div className="lg:col-span-7 space-y-8">
           <HeroBanner />
           <JoinRoomForm
@@ -108,15 +99,10 @@ export default function Home() {
           />
           <TrustBadges />
         </div>
-
-        {/* Right Column: Interactive Graphic Card Mockup */}
         <MeetingCardMockup />
       </main>
 
-      {/* Feature Highlights Grid */}
       <FeatureHighlights />
-
-      {/* Footer */}
       <Footer />
     </div>
   );
