@@ -1,15 +1,19 @@
 import React, { useState, useEffect } from "react";
-import { useNavigate } from "react-router";
+// import { useNavigate } from "react-router";
 import { httpService } from "../services/httpService";
+import { useSocket } from "../hooks/useSocket";
+import type { SocketCallbackResponse } from "../types/socket.type";
 
 export default function Home() {
-  const navigate = useNavigate();
+  // const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [roomId, setRoomId] = useState("");
   const [currentTime, setCurrentTime] = useState("");
   const [copiedNotification, setCopiedNotification] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+
+  const { socket } = useSocket();
 
   useEffect(() => {
     const updateClock = () => {
@@ -74,9 +78,21 @@ export default function Home() {
       return;
     }
     setErrorMsg("");
-    navigate(
-      `/room/${roomId.trim()}?email=${encodeURIComponent(email.trim())}`,
+
+    // need to join the room
+    socket.emit(
+      "join-room",
+      { roomId, email },
+      (response: SocketCallbackResponse) => {
+        if (response.success) {
+          console.log("User joined the room successfully");
+        }
+      },
     );
+
+    // navigate(
+    //   `/room/${roomId.trim()}?email=${encodeURIComponent(email.trim())}`,
+    // );
   };
 
   return (
