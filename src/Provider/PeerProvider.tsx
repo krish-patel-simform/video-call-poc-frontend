@@ -1,4 +1,10 @@
-import { useMemo, type PropsWithChildren, useEffect, useState, useCallback } from "react";
+import {
+  useMemo,
+  type PropsWithChildren,
+  useEffect,
+  useState,
+  useCallback,
+} from "react";
 import { PeerContext } from "../context/PeerContext";
 
 export default function PeerProvider({ children }: PropsWithChildren) {
@@ -77,7 +83,10 @@ export default function PeerProvider({ children }: PropsWithChildren) {
       setRemoteStream(event.streams[0]);
     }
     peer.addEventListener("track", handleTrack);
-    return () => peer.removeEventListener("track", handleTrack);
+
+    return () => {
+      peer.removeEventListener("track", handleTrack);
+    };
   }, [peer]);
 
   // Emit local ICE candidates to registered handlers
@@ -89,6 +98,7 @@ export default function PeerProvider({ children }: PropsWithChildren) {
       }
     }
     peer.addEventListener("icecandidate", handleIceCandidate);
+
     return () => peer.removeEventListener("icecandidate", handleIceCandidate);
   }, [peer, iceCandidateHandlers]);
 

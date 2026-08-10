@@ -23,7 +23,24 @@ export default function RoomPage() {
   } = usePeer();
 
   const [myStream, setMyStream] = useState<MediaStream | null>(null);
-  // Store the remote user's email so we can route ICE candidates correctly
+
+  /**
+   * myStreamRef mirrors myStream state but is accessible in callbacks WITHOUT
+   * being listed as a dependency.
+   *
+   * WHY THIS MATTERS:
+   *   The main useEffect (which emits join-room) re-runs whenever any of its
+   *   deps change. If handleNewUserJoined / handleIncommingCall / handleCallAccepted
+   *   have `myStream` in their deps, they get recreated every time the stream
+   *   starts. That recreates the handlers → triggers the main useEffect → emits
+   *   join-room AGAIN mid-call → the server treats the already-in-call peer as a
+   *   "new" user → the other side sends another offer → WebRTC state machine
+   *   gets corrupted ("Called in wrong state: stable").
+   *
+   *   Using a ref lets handlers read the current stream value at call-time
+   *   without needing to declare it as a dependency.
+   */
+  const myStreamRef = useRef<MediaStream | null>(null);
   const remoteEmailRef = useRef<string | null>(null);
 
   // ------------------------------------------------------------------
@@ -34,26 +51,43 @@ export default function RoomPage() {
       audio: true,
       video: true,
     });
+    myStreamRef.current = stream; // keep ref in sync
     setMyStream(stream);
     return stream;
   }, []);
 
   // ------------------------------------------------------------------
-  // Existing user: a new user just joined → create offer and call them
+  // HOST side: a new guest joined the room.
+  //
+  // CRITICAL ORDER — tracks MUST be added before createOffer():
+  //   The SDP offer is a contract that enumerates which tracks will be
+  //   sent. addTrack() after createOffer() = tracks not in SDP = the
+  //   remote peer's ontrack never fires = no video on either side.
+  //
+  // NO myStream in deps — we read myStreamRef.current instead.
+  //   If myStream were in deps, this callback would be recreated when the
+  //   stream starts, causing the main effect to re-run and re-emit join-room.
   // ------------------------------------------------------------------
   const handleNewUserJoined = useCallback(
     async ({ newUserEmail }: { newUserEmail: string }) => {
       console.log(`[RoomPage] New user joined: ${newUserEmail}`);
       remoteEmailRef.current = newUserEmail;
+
+      // Read current stream from ref — no dependency on myStream state
+      const stream = myStreamRef.current ?? (await startStream());
+      await sendStream(stream); // addTrack() BEFORE createOffer()
+
       const offer = await createOffer();
       socket?.emit("call-user", { newUserEmail, offer });
     },
-    [createOffer, socket],
+    [createOffer, socket, startStream, sendStream], // ← no myStream
   );
 
   // ------------------------------------------------------------------
-  // New user: received an offer from the existing user → answer it,
-  // then send our own stream immediately after the connection is ready
+  // GUEST side: received an offer from the host.
+  //
+  // Same rule: tracks before createAnswer().
+  // Same ref trick: no myStream in deps.
   // ------------------------------------------------------------------
   const handleIncommingCall = useCallback(
     async ({
@@ -65,31 +99,30 @@ export default function RoomPage() {
     }) => {
       console.log(`[RoomPage] Incoming call from ${fromUserEmail}`);
       remoteEmailRef.current = fromUserEmail;
+
+      const stream = myStreamRef.current ?? (await startStream());
+      await sendStream(stream); // addTrack() BEFORE createAnswer()
+
       const answer = await createAnswer(offer);
       socket?.emit("call-accepted", { emailId: fromUserEmail, answer });
     },
-    [createAnswer, socket],
+    [createAnswer, socket, startStream, sendStream], // ← no myStream
   );
 
   // ------------------------------------------------------------------
-  // Existing user: the new user accepted our offer → set remote answer,
-  // then add our stream tracks so they flow over the established connection
+  // HOST side: guest accepted → apply remote answer.
+  // Tracks were already added before createOffer() — nothing extra needed.
   // ------------------------------------------------------------------
   const handleCallAccepted = useCallback(
     async ({ answer }: { answer: RTCSessionDescriptionInit }) => {
       console.log("[RoomPage] Call accepted — setting remote answer");
       await setRemoteAnswer(answer);
-
-      // NOW it is safe to add tracks (connection is fully negotiated)
-      const stream = myStream ?? (await startStream());
-      await sendStream(stream);
     },
-    [setRemoteAnswer, myStream, startStream, sendStream],
+    [setRemoteAnswer], // ← no myStream — stable forever
   );
 
   // ------------------------------------------------------------------
-  // ICE candidate relay — forward locally generated candidates to the
-  // remote peer and apply remotely received candidates locally
+  // ICE candidate relay
   // ------------------------------------------------------------------
   useEffect(() => {
     if (!socket) return;
@@ -117,30 +150,10 @@ export default function RoomPage() {
   }, [socket, onIceCandidate, addIceCandidate]);
 
   // ------------------------------------------------------------------
-  // Also send our stream when the incoming user's call is answered
-  // (the answering side must also push tracks after setLocalDescription)
-  // ------------------------------------------------------------------
-  useEffect(() => {
-    if (!socket) return;
-
-    // After WE answered an incoming call, add our tracks too
-    async function handleStreamAfterAnswer() {
-      if (myStream) {
-        await sendStream(myStream);
-      } else {
-        const stream = await startStream();
-        await sendStream(stream);
-      }
-    }
-
-    socket.on("call-accepted-ack", handleStreamAfterAnswer);
-    return () => {
-      socket.off("call-accepted-ack", handleStreamAfterAnswer);
-    };
-  }, [socket, myStream, sendStream, startStream]);
-
-  // ------------------------------------------------------------------
-  // Main socket event setup + room join
+  // Emit join-room ONCE — separate from event listener registration so
+  // that re-registration of listeners never re-triggers join-room.
+  // Deps are all stable after mount: socket (memoized), email, roomId
+  // (from URL), navigate (stable router fn).
   // ------------------------------------------------------------------
   useEffect(() => {
     if (!socket) return;
@@ -151,10 +164,6 @@ export default function RoomPage() {
       return;
     }
 
-    socket.on("user-joined", handleNewUserJoined);
-    socket.on("incomming-call", handleIncommingCall);
-    socket.on("call-accepted", handleCallAccepted);
-
     socket.emit(
       "join-room",
       { roomId, email },
@@ -164,32 +173,26 @@ export default function RoomPage() {
         }
       },
     );
+  }, [socket, email, roomId, navigate]); // ← no handler deps here
+
+  // ------------------------------------------------------------------
+  // Register call event listeners — separate effect so that if handlers
+  // are ever recreated, only listeners re-register, NOT join-room.
+  // With myStreamRef in place handlers are stable so this runs once too.
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on("user-joined", handleNewUserJoined);
+    socket.on("incomming-call", handleIncommingCall);
+    socket.on("call-accepted", handleCallAccepted);
 
     return () => {
       socket.off("user-joined", handleNewUserJoined);
       socket.off("incomming-call", handleIncommingCall);
       socket.off("call-accepted", handleCallAccepted);
     };
-  }, [
-    socket,
-    email,
-    roomId,
-    navigate,
-    handleNewUserJoined,
-    handleIncommingCall,
-    handleCallAccepted,
-  ]);
-
-  // ------------------------------------------------------------------
-  // When the answering side finishes answering, also push their stream.
-  // We do this by watching `remoteStream` arriving — it means the peer
-  // connection is live and we should make sure our tracks are sent.
-  // ------------------------------------------------------------------
-  useEffect(() => {
-    if (!remoteStream || !myStream) return;
-    // Peer connection is established — ensure our tracks are sent
-    sendStream(myStream);
-  }, [remoteStream, myStream, sendStream]);
+  }, [socket, handleNewUserJoined, handleIncommingCall, handleCallAccepted]);
 
   return (
     <div>
@@ -207,7 +210,9 @@ export default function RoomPage() {
           </section>
         )}
         <section className="bg-slate-900 p-4 rounded-xl border border-slate-800">
-          <h6>Remote User</h6>
+          <h6>
+            {remoteEmailRef.current ? remoteEmailRef.current : "Awaiting Connection"}
+          </h6>
           {remoteStream && <VideoPlayer stream={remoteStream} muted={false} />}
         </section>
       </div>
