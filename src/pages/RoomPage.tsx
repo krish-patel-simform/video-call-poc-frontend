@@ -4,12 +4,16 @@ import { useSocket } from "../hooks/useSocket";
 import { usePeer } from "../hooks/usePeer";
 import type { SocketCallbackResponse } from "../types/socket.type";
 import { VideoPlayer } from "../components/VideoPlayer";
+import { MeetingToolbar } from "../components/MeetingToolbar";
 
 export default function RoomPage() {
   const { roomId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+
   const email = location.state?.email as string | undefined;
+  const initialMic = (location.state?.initialMic as boolean | undefined) ?? true;
+  const initialCamera = (location.state?.initialCamera as boolean | undefined) ?? true;
 
   const { socket } = useSocket();
   const {
@@ -23,72 +27,47 @@ export default function RoomPage() {
   } = usePeer();
 
   const [myStream, setMyStream] = useState<MediaStream | null>(null);
+  const [isMicOn, setIsMicOn] = useState<boolean>(initialMic);
+  const [isCameraOn, setIsCameraOn] = useState<boolean>(initialCamera);
 
-  /**
-   * myStreamRef mirrors myStream state but is accessible in callbacks WITHOUT
-   * being listed as a dependency.
-   *
-   * WHY THIS MATTERS:
-   *   The main useEffect (which emits join-room) re-runs whenever any of its
-   *   deps change. If handleNewUserJoined / handleIncommingCall / handleCallAccepted
-   *   have `myStream` in their deps, they get recreated every time the stream
-   *   starts. That recreates the handlers → triggers the main useEffect → emits
-   *   join-room AGAIN mid-call → the server treats the already-in-call peer as a
-   *   "new" user → the other side sends another offer → WebRTC state machine
-   *   gets corrupted ("Called in wrong state: stable").
-   *
-   *   Using a ref lets handlers read the current stream value at call-time
-   *   without needing to declare it as a dependency.
-   */
   const myStreamRef = useRef<MediaStream | null>(null);
   const remoteEmailRef = useRef<string | null>(null);
 
-  // ------------------------------------------------------------------
-  // Get local media (called once on mount or when user clicks Start Video)
-  // ------------------------------------------------------------------
+  // Get local media and set track enabled state based on preferences
   const startStream = useCallback(async () => {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: true,
       video: true,
     });
-    myStreamRef.current = stream; // keep ref in sync
+
+    stream.getAudioTracks().forEach((track) => {
+      track.enabled = initialMic;
+    });
+    stream.getVideoTracks().forEach((track) => {
+      track.enabled = initialCamera;
+    });
+
+    myStreamRef.current = stream;
     setMyStream(stream);
     return stream;
-  }, []);
+  }, [initialMic, initialCamera]);
 
-  // ------------------------------------------------------------------
-  // HOST side: a new guest joined the room.
-  //
-  // CRITICAL ORDER — tracks MUST be added before createOffer():
-  //   The SDP offer is a contract that enumerates which tracks will be
-  //   sent. addTrack() after createOffer() = tracks not in SDP = the
-  //   remote peer's ontrack never fires = no video on either side.
-  //
-  // NO myStream in deps — we read myStreamRef.current instead.
-  //   If myStream were in deps, this callback would be recreated when the
-  //   stream starts, causing the main effect to re-run and re-emit join-room.
-  // ------------------------------------------------------------------
+  // HOST side: new user joined
   const handleNewUserJoined = useCallback(
     async ({ newUserEmail }: { newUserEmail: string }) => {
       console.log(`[RoomPage] New user joined: ${newUserEmail}`);
       remoteEmailRef.current = newUserEmail;
 
-      // Read current stream from ref — no dependency on myStream state
       const stream = myStreamRef.current ?? (await startStream());
-      await sendStream(stream); // addTrack() BEFORE createOffer()
+      await sendStream(stream);
 
       const offer = await createOffer();
       socket?.emit("call-user", { newUserEmail, offer });
     },
-    [createOffer, socket, startStream, sendStream], // ← no myStream
+    [createOffer, socket, startStream, sendStream]
   );
 
-  // ------------------------------------------------------------------
-  // GUEST side: received an offer from the host.
-  //
-  // Same rule: tracks before createAnswer().
-  // Same ref trick: no myStream in deps.
-  // ------------------------------------------------------------------
+  // GUEST side: incoming call
   const handleIncommingCall = useCallback(
     async ({
       offer,
@@ -101,29 +80,52 @@ export default function RoomPage() {
       remoteEmailRef.current = fromUserEmail;
 
       const stream = myStreamRef.current ?? (await startStream());
-      await sendStream(stream); // addTrack() BEFORE createAnswer()
+      await sendStream(stream);
 
       const answer = await createAnswer(offer);
       socket?.emit("call-accepted", { emailId: fromUserEmail, answer });
     },
-    [createAnswer, socket, startStream, sendStream], // ← no myStream
+    [createAnswer, socket, startStream, sendStream]
   );
 
-  // ------------------------------------------------------------------
-  // HOST side: guest accepted → apply remote answer.
-  // Tracks were already added before createOffer() — nothing extra needed.
-  // ------------------------------------------------------------------
+  // HOST side: call accepted
   const handleCallAccepted = useCallback(
     async ({ answer }: { answer: RTCSessionDescriptionInit }) => {
       console.log("[RoomPage] Call accepted — setting remote answer");
       await setRemoteAnswer(answer);
     },
-    [setRemoteAnswer], // ← no myStream — stable forever
+    [setRemoteAnswer]
   );
 
-  // ------------------------------------------------------------------
+  // Toggle Microphone
+  const toggleMic = useCallback(() => {
+    if (!myStreamRef.current) return;
+    const newMicState = !isMicOn;
+    myStreamRef.current.getAudioTracks().forEach((track) => {
+      track.enabled = newMicState;
+    });
+    setIsMicOn(newMicState);
+  }, [isMicOn]);
+
+  // Toggle Camera
+  const toggleCamera = useCallback(() => {
+    if (!myStreamRef.current) return;
+    const newCameraState = !isCameraOn;
+    myStreamRef.current.getVideoTracks().forEach((track) => {
+      track.enabled = newCameraState;
+    });
+    setIsCameraOn(newCameraState);
+  }, [isCameraOn]);
+
+  // Leave Call
+  const handleLeaveCall = useCallback(() => {
+    if (myStreamRef.current) {
+      myStreamRef.current.getTracks().forEach((t) => t.stop());
+    }
+    navigate("/");
+  }, [navigate]);
+
   // ICE candidate relay
-  // ------------------------------------------------------------------
   useEffect(() => {
     if (!socket) return;
 
@@ -136,12 +138,9 @@ export default function RoomPage() {
       }
     });
 
-    socket.on(
-      "peer:ice-candidate",
-      ({ candidate }: { candidate: RTCIceCandidateInit }) => {
-        addIceCandidate(candidate);
-      },
-    );
+    socket.on("peer:ice-candidate", ({ candidate }: { candidate: RTCIceCandidateInit }) => {
+      addIceCandidate(candidate);
+    });
 
     return () => {
       cleanupIce();
@@ -149,40 +148,22 @@ export default function RoomPage() {
     };
   }, [socket, onIceCandidate, addIceCandidate]);
 
-  // ------------------------------------------------------------------
-  // Emit join-room ONCE — separate from event listener registration so
-  // that re-registration of listeners never re-triggers join-room.
-  // Deps are all stable after mount: socket (memoized), email, roomId
-  // (from URL), navigate (stable router fn).
-  // ------------------------------------------------------------------
+  // Join room once on mount
   useEffect(() => {
     if (!socket) return;
-
     if (!email || !roomId) {
-      console.warn("[RoomPage] Missing email or roomId — redirecting to home");
       navigate("/");
       return;
     }
 
-    socket.emit(
-      "join-room",
-      { roomId, email },
-      (response: SocketCallbackResponse) => {
-        if (response.success) {
-          console.log("[RoomPage] Successfully joined the room");
-        }
-      },
-    );
-  }, [socket, email, roomId, navigate]); // ← no handler deps here
+    socket.emit("join-room", { roomId, email }, (res: SocketCallbackResponse) => {
+      if (res.success) console.log("[RoomPage] Joined room successfully");
+    });
+  }, [socket, email, roomId, navigate]);
 
-  // ------------------------------------------------------------------
-  // Register call event listeners — separate effect so that if handlers
-  // are ever recreated, only listeners re-register, NOT join-room.
-  // With myStreamRef in place handlers are stable so this runs once too.
-  // ------------------------------------------------------------------
+  // Register socket listeners
   useEffect(() => {
     if (!socket) return;
-
     socket.on("user-joined", handleNewUserJoined);
     socket.on("incomming-call", handleIncommingCall);
     socket.on("call-accepted", handleCallAccepted);
@@ -195,27 +176,66 @@ export default function RoomPage() {
   }, [socket, handleNewUserJoined, handleIncommingCall, handleCallAccepted]);
 
   return (
-    <div>
-      <h1>Room Page: {roomId}</h1>
-      <p>Logged in as: {email}</p>
-
-      <div className="flex w-screen justify-between">
-        <button className="border p-4 rounded" onClick={startStream}>
-          Start Video
-        </button>
-        {myStream && (
-          <section className="bg-slate-900 p-4 rounded-xl border border-slate-800">
-            <h6>You</h6>
-            <VideoPlayer stream={myStream} muted={true} />
-          </section>
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col p-6 pb-28 relative">
+      {/* Top Header info */}
+      <header className="flex items-center justify-between border-b border-slate-800 pb-4 mb-6">
+        <div>
+          <h1 className="text-xl font-bold text-slate-100">Room: {roomId}</h1>
+          <p className="text-xs text-slate-400">Signed in as: {email}</p>
+        </div>
+        {!myStream && (
+          <button
+            onClick={startStream}
+            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold rounded-lg shadow cursor-pointer transition-colors"
+          >
+            Start Video
+          </button>
         )}
-        <section className="bg-slate-900 p-4 rounded-xl border border-slate-800">
-          <h6>
-            {remoteEmailRef.current ? remoteEmailRef.current : "Awaiting Connection"}
-          </h6>
-          {remoteStream && <VideoPlayer stream={remoteStream} muted={false} />}
+      </header>
+
+      {/* Main Video Stream Grid */}
+      <main className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-6 max-w-6xl w-full mx-auto">
+        {/* Local Participant View */}
+        <section className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-col aspect-video relative overflow-hidden shadow-xl">
+          <div className="flex items-center justify-between mb-3 z-10">
+            <span className="text-sm font-semibold text-slate-200">You ({email})</span>
+          </div>
+          <div className="flex-1 rounded-xl overflow-hidden relative">
+            <VideoPlayer
+              stream={myStream}
+              muted={true}
+              isCameraOn={isCameraOn}
+              displayName={email?.split("@")[0] || "You"}
+            />
+          </div>
         </section>
-      </div>
+
+        {/* Remote Participant View */}
+        <section className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-col aspect-video relative overflow-hidden shadow-xl">
+          <div className="flex items-center justify-between mb-3 z-10">
+            <span className="text-sm font-semibold text-slate-200">
+              {remoteEmailRef.current ? remoteEmailRef.current : "Awaiting Remote Peer..."}
+            </span>
+          </div>
+          <div className="flex-1 rounded-xl overflow-hidden relative">
+            <VideoPlayer
+              stream={remoteStream}
+              muted={false}
+              isCameraOn={Boolean(remoteStream)}
+              displayName={remoteEmailRef.current?.split("@")[0] || "Remote User"}
+            />
+          </div>
+        </section>
+      </main>
+
+      {/* In-Call Meeting Floating Control Toolbar */}
+      <MeetingToolbar
+        isMicOn={isMicOn}
+        isCameraOn={isCameraOn}
+        onToggleMic={toggleMic}
+        onToggleCamera={toggleCamera}
+        onLeaveCall={handleLeaveCall}
+      />
     </div>
   );
 }

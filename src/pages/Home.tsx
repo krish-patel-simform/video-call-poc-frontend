@@ -13,6 +13,8 @@ import { useNavigate } from "react-router";
 export default function Home() {
   const [email, setEmail] = useState("");
   const [roomId, setRoomId] = useState("");
+  const [initialMic, setInitialMic] = useState(true);
+  const [initialCamera, setInitialCamera] = useState(true);
   const [copiedNotification, setCopiedNotification] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -63,8 +65,8 @@ export default function Home() {
     }
     setErrorMsg("");
 
-    // Pass the email in the route state so RoomPage can use it
-    navigate(`/room/${roomId}`, { state: { email } });
+    // Pass the email and initial media preferences in the route state so RoomPage can use it
+    navigate(`/room/${roomId}`, { state: { email, initialMic, initialCamera } });
   };
 
   return (
@@ -92,6 +94,10 @@ export default function Home() {
             setEmail={setEmail}
             roomId={roomId}
             setRoomId={setRoomId}
+            initialMic={initialMic}
+            setInitialMic={setInitialMic}
+            initialCamera={initialCamera}
+            setInitialCamera={setInitialCamera}
             isGenerating={isGenerating}
             errorMsg={errorMsg}
             onJoin={handleJoin}
