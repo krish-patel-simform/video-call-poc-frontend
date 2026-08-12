@@ -8,6 +8,10 @@ export type PeerContextType = {
   ) => Promise<RTCSessionDescriptionInit>;
   setRemoteAnswer: (answer: RTCSessionDescriptionInit) => void;
   sendStream: (stream: MediaStream) => void;
+  replaceTrack: (
+    oldTrack: MediaStreamTrack,
+    newTrack: MediaStreamTrack,
+  ) => Promise<void>;
   remoteStream: MediaStream | null;
   /** Register a listener for locally generated ICE candidates. Returns a cleanup fn. */
   onIceCandidate: (handler: (candidate: RTCIceCandidate) => void) => () => void;

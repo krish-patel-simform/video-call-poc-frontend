@@ -1,5 +1,8 @@
-import { Mic, MicOff, Video, VideoOff, PhoneOff } from "lucide-react";
+import { useState } from "react";
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Settings } from "lucide-react";
 import { cn } from "../utils/cn";
+import { DeviceSelectorDropdown } from "./DeviceSelectorDropdown";
+import type { MediaDeviceInfoState } from "../hooks/useMediaDevices";
 
 interface MeetingToolbarProps {
   isMicOn: boolean;
@@ -7,6 +10,15 @@ interface MeetingToolbarProps {
   onToggleMic: () => void;
   onToggleCamera: () => void;
   onLeaveCall: () => void;
+  audioInputs?: MediaDeviceInfoState[];
+  videoInputs?: MediaDeviceInfoState[];
+  audioOutputs?: MediaDeviceInfoState[];
+  selectedAudioId?: string;
+  selectedVideoId?: string;
+  selectedOutputId?: string;
+  onSelectAudio?: (deviceId: string) => void;
+  onSelectVideo?: (deviceId: string) => void;
+  onSelectOutput?: (deviceId: string) => void;
 }
 
 export function MeetingToolbar({
@@ -15,7 +27,18 @@ export function MeetingToolbar({
   onToggleMic,
   onToggleCamera,
   onLeaveCall,
+  audioInputs = [],
+  videoInputs = [],
+  audioOutputs = [],
+  selectedAudioId = "",
+  selectedVideoId = "",
+  selectedOutputId = "",
+  onSelectAudio,
+  onSelectVideo,
+  onSelectOutput,
 }: MeetingToolbarProps) {
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
   return (
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-4 px-6 py-3 bg-slate-900/90 border border-slate-800/90 rounded-2xl backdrop-blur-xl shadow-2xl shadow-slate-950/80">
       {/* Microphone Toggle Button */}
@@ -49,6 +72,40 @@ export function MeetingToolbar({
       >
         {isCameraOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
       </button>
+
+      {/* Hardware Settings Button */}
+      {onSelectAudio && onSelectVideo && (
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+            aria-label="Audio and Video Settings"
+            className={cn(
+              "flex items-center justify-center w-12 h-12 rounded-xl transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 cursor-pointer",
+              isSettingsOpen
+                ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"
+                : "bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700/80"
+            )}
+          >
+            <Settings className="w-5 h-5" />
+          </button>
+
+          {isSettingsOpen && (
+            <DeviceSelectorDropdown
+              audioInputs={audioInputs}
+              videoInputs={videoInputs}
+              audioOutputs={audioOutputs}
+              selectedAudioId={selectedAudioId}
+              selectedVideoId={selectedVideoId}
+              selectedOutputId={selectedOutputId}
+              onSelectAudio={onSelectAudio}
+              onSelectVideo={onSelectVideo}
+              onSelectOutput={onSelectOutput}
+              onClose={() => setIsSettingsOpen(false)}
+            />
+          )}
+        </div>
+      )}
 
       <div className="w-px h-6 bg-slate-800 my-auto" />
 

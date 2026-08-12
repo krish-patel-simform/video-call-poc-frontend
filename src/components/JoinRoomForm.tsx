@@ -1,6 +1,7 @@
 import React from "react";
 import { Mic, MicOff, Video, VideoOff } from "lucide-react";
 import { TextInput } from "./TextInput";
+import type { MediaDeviceInfoState } from "../hooks/useMediaDevices";
 
 interface JoinRoomFormProps {
   email: string;
@@ -11,6 +12,12 @@ interface JoinRoomFormProps {
   setInitialMic: (val: boolean) => void;
   initialCamera: boolean;
   setInitialCamera: (val: boolean) => void;
+  audioInputs?: MediaDeviceInfoState[];
+  videoInputs?: MediaDeviceInfoState[];
+  selectedAudioId?: string;
+  setSelectedAudioId?: (id: string) => void;
+  selectedVideoId?: string;
+  setSelectedVideoId?: (id: string) => void;
   isGenerating: boolean;
   errorMsg: string;
   onJoin: (e: React.FormEvent) => void;
@@ -26,6 +33,12 @@ export function JoinRoomForm({
   setInitialMic,
   initialCamera,
   setInitialCamera,
+  audioInputs = [],
+  videoInputs = [],
+  selectedAudioId = "",
+  setSelectedAudioId,
+  selectedVideoId = "",
+  setSelectedVideoId,
   isGenerating,
   errorMsg,
   onJoin,
@@ -76,7 +89,7 @@ export function JoinRoomForm({
         {/* Pre-Join Audio & Video Options */}
         <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 space-y-3">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 block">
-            Pre-Join Options
+            Pre-Join Media & Device Options
           </span>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <button
@@ -113,6 +126,42 @@ export function JoinRoomForm({
               </span>
             </button>
           </div>
+
+          {/* Microphones Hardware Dropdown */}
+          {audioInputs.length > 0 && setSelectedAudioId && (
+            <div className="pt-1">
+              <label className="text-xs font-medium text-slate-400 block mb-1">Select Microphone</label>
+              <select
+                value={selectedAudioId}
+                onChange={(e) => setSelectedAudioId(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs font-medium text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+              >
+                {audioInputs.map((device) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Cameras Hardware Dropdown */}
+          {videoInputs.length > 0 && setSelectedVideoId && (
+            <div className="pt-1">
+              <label className="text-xs font-medium text-slate-400 block mb-1">Select Camera</label>
+              <select
+                value={selectedVideoId}
+                onChange={(e) => setSelectedVideoId(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs font-medium text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+              >
+                {videoInputs.map((device) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-3.5">

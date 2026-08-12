@@ -53,6 +53,19 @@ export default function PeerProvider({ children }: PropsWithChildren) {
     }
   }
 
+  async function replaceTrack(
+    oldTrack: MediaStreamTrack,
+    newTrack: MediaStreamTrack,
+  ) {
+    const senders = peer.getSenders();
+    const sender = senders.find(
+      (s) => s.track === oldTrack || s.track?.kind === newTrack.kind,
+    );
+    if (sender) {
+      await sender.replaceTrack(newTrack);
+    }
+  }
+
   /**
    * Register a callback that fires whenever a local ICE candidate is generated.
    * RoomPage uses this to forward candidates to the remote peer via socket.
@@ -109,6 +122,7 @@ export default function PeerProvider({ children }: PropsWithChildren) {
       createAnswer,
       setRemoteAnswer,
       sendStream,
+      replaceTrack,
       remoteStream,
       onIceCandidate,
       addIceCandidate,

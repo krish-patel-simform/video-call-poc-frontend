@@ -2,6 +2,7 @@ import { useEffect, useCallback, useState, useRef } from "react";
 import { useParams, useLocation, useNavigate } from "react-router";
 import { useSocket } from "../hooks/useSocket";
 import { usePeer } from "../hooks/usePeer";
+import { useMediaDevices } from "../hooks/useMediaDevices";
 import type { SocketCallbackResponse } from "../types/socket.type";
 import { VideoPlayer } from "../components/VideoPlayer";
 import { MeetingToolbar } from "../components/MeetingToolbar";
@@ -14,6 +15,8 @@ export default function RoomPage() {
   const email = location.state?.email as string | undefined;
   const initialMic = (location.state?.initialMic as boolean | undefined) ?? true;
   const initialCamera = (location.state?.initialCamera as boolean | undefined) ?? true;
+  const initialAudioId = location.state?.selectedAudioId as string | undefined;
+  const initialVideoId = location.state?.selectedVideoId as string | undefined;
 
   const { socket } = useSocket();
   const {
@@ -22,9 +25,28 @@ export default function RoomPage() {
     setRemoteAnswer,
     remoteStream,
     sendStream,
+    replaceTrack,
     onIceCandidate,
     addIceCandidate,
   } = usePeer();
+
+  const {
+    audioInputs,
+    videoInputs,
+    audioOutputs,
+    selectedAudioId,
+    selectedVideoId,
+    selectedOutputId,
+    setSelectedAudioId,
+    setSelectedVideoId,
+    setSelectedOutputId,
+  } = useMediaDevices();
+
+  // Sync initial passed device IDs from Home page if available
+  useEffect(() => {
+    if (initialAudioId) setSelectedAudioId(initialAudioId);
+    if (initialVideoId) setSelectedVideoId(initialVideoId);
+  }, [initialAudioId, initialVideoId, setSelectedAudioId, setSelectedVideoId]);
 
   const [myStream, setMyStream] = useState<MediaStream | null>(null);
   const [isMicOn, setIsMicOn] = useState<boolean>(initialMic);
@@ -33,11 +55,18 @@ export default function RoomPage() {
   const myStreamRef = useRef<MediaStream | null>(null);
   const remoteEmailRef = useRef<string | null>(null);
 
-  // Get local media and set track enabled state based on preferences
+  // Get local media using selected device IDs
   const startStream = useCallback(async () => {
+    const audioConstraints = selectedAudioId
+      ? { deviceId: { exact: selectedAudioId } }
+      : true;
+    const videoConstraints = selectedVideoId
+      ? { deviceId: { exact: selectedVideoId } }
+      : true;
+
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
-      video: true,
+      audio: audioConstraints,
+      video: videoConstraints,
     });
 
     stream.getAudioTracks().forEach((track) => {
@@ -50,7 +79,69 @@ export default function RoomPage() {
     myStreamRef.current = stream;
     setMyStream(stream);
     return stream;
-  }, [initialMic, initialCamera]);
+  }, [selectedAudioId, selectedVideoId, initialMic, initialCamera]);
+
+  // Handle active audio (microphone) hardware device change mid-call
+  const handleSelectAudioDevice = useCallback(
+    async (newAudioId: string) => {
+      setSelectedAudioId(newAudioId);
+      if (!myStreamRef.current) return;
+
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          audio: { deviceId: { exact: newAudioId } },
+        });
+        const newAudioTrack = newStream.getAudioTracks()[0];
+        if (!newAudioTrack) return;
+
+        newAudioTrack.enabled = isMicOn;
+
+        const oldAudioTrack = myStreamRef.current.getAudioTracks()[0];
+        if (oldAudioTrack) {
+          myStreamRef.current.removeTrack(oldAudioTrack);
+          oldAudioTrack.stop();
+          await replaceTrack(oldAudioTrack, newAudioTrack);
+        }
+
+        myStreamRef.current.addTrack(newAudioTrack);
+        setMyStream(new MediaStream(myStreamRef.current.getTracks()));
+      } catch (err) {
+        console.error("[RoomPage] Error switching audio device:", err);
+      }
+    },
+    [isMicOn, replaceTrack, setSelectedAudioId]
+  );
+
+  // Handle active video (camera) hardware device change mid-call
+  const handleSelectVideoDevice = useCallback(
+    async (newVideoId: string) => {
+      setSelectedVideoId(newVideoId);
+      if (!myStreamRef.current) return;
+
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          video: { deviceId: { exact: newVideoId } },
+        });
+        const newVideoTrack = newStream.getVideoTracks()[0];
+        if (!newVideoTrack) return;
+
+        newVideoTrack.enabled = isCameraOn;
+
+        const oldVideoTrack = myStreamRef.current.getVideoTracks()[0];
+        if (oldVideoTrack) {
+          myStreamRef.current.removeTrack(oldVideoTrack);
+          oldVideoTrack.stop();
+          await replaceTrack(oldVideoTrack, newVideoTrack);
+        }
+
+        myStreamRef.current.addTrack(newVideoTrack);
+        setMyStream(new MediaStream(myStreamRef.current.getTracks()));
+      } catch (err) {
+        console.error("[RoomPage] Error switching video device:", err);
+      }
+    },
+    [isCameraOn, replaceTrack, setSelectedVideoId]
+  );
 
   // HOST side: new user joined
   const handleNewUserJoined = useCallback(
@@ -235,6 +326,15 @@ export default function RoomPage() {
         onToggleMic={toggleMic}
         onToggleCamera={toggleCamera}
         onLeaveCall={handleLeaveCall}
+        audioInputs={audioInputs}
+        videoInputs={videoInputs}
+        audioOutputs={audioOutputs}
+        selectedAudioId={selectedAudioId}
+        selectedVideoId={selectedVideoId}
+        selectedOutputId={selectedOutputId}
+        onSelectAudio={handleSelectAudioDevice}
+        onSelectVideo={handleSelectVideoDevice}
+        onSelectOutput={setSelectedOutputId}
       />
     </div>
   );

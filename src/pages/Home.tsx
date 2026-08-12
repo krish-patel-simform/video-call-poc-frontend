@@ -9,6 +9,7 @@ import { MeetingCardMockup } from "../components/MeetingCardMockup";
 import { FeatureHighlights } from "../components/FeatureHighlights";
 import { httpService } from "../services/httpService";
 import { useNavigate } from "react-router";
+import { useMediaDevices } from "../hooks/useMediaDevices";
 
 export default function Home() {
   const [email, setEmail] = useState("");
@@ -18,6 +19,15 @@ export default function Home() {
   const [copiedNotification, setCopiedNotification] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+
+  const {
+    audioInputs,
+    videoInputs,
+    selectedAudioId,
+    selectedVideoId,
+    setSelectedAudioId,
+    setSelectedVideoId,
+  } = useMediaDevices();
 
   const navigate = useNavigate();
 
@@ -65,8 +75,16 @@ export default function Home() {
     }
     setErrorMsg("");
 
-    // Pass the email and initial media preferences in the route state so RoomPage can use it
-    navigate(`/room/${roomId}`, { state: { email, initialMic, initialCamera } });
+    // Pass email, mic/cam preferences, and selected device IDs in route state
+    navigate(`/room/${roomId}`, {
+      state: {
+        email,
+        initialMic,
+        initialCamera,
+        selectedAudioId,
+        selectedVideoId,
+      },
+    });
   };
 
   return (
@@ -98,6 +116,12 @@ export default function Home() {
             setInitialMic={setInitialMic}
             initialCamera={initialCamera}
             setInitialCamera={setInitialCamera}
+            audioInputs={audioInputs}
+            videoInputs={videoInputs}
+            selectedAudioId={selectedAudioId}
+            setSelectedAudioId={setSelectedAudioId}
+            selectedVideoId={selectedVideoId}
+            setSelectedVideoId={setSelectedVideoId}
             isGenerating={isGenerating}
             errorMsg={errorMsg}
             onJoin={handleJoin}
