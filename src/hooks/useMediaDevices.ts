@@ -76,15 +76,21 @@ export function useMediaDevices() {
   }, [selectedAudioId, selectedVideoId, selectedOutputId]);
 
   useEffect(() => {
-    enumerateDevices();
-
     const handleDeviceChange = () => {
       enumerateDevices();
     };
 
-    navigator.mediaDevices?.addEventListener("devicechange", handleDeviceChange);
+    handleDeviceChange();
+
+    navigator.mediaDevices?.addEventListener(
+      "devicechange",
+      handleDeviceChange,
+    );
     return () => {
-      navigator.mediaDevices?.removeEventListener("devicechange", handleDeviceChange);
+      navigator.mediaDevices?.removeEventListener(
+        "devicechange",
+        handleDeviceChange,
+      );
     };
   }, [enumerateDevices]);
 

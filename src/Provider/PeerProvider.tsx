@@ -54,15 +54,27 @@ export default function PeerProvider({ children }: PropsWithChildren) {
   }
 
   async function replaceTrack(
-    oldTrack: MediaStreamTrack,
+    oldTrack: MediaStreamTrack | null,
     newTrack: MediaStreamTrack,
   ) {
     const senders = peer.getSenders();
-    const sender = senders.find(
-      (s) => s.track === oldTrack || s.track?.kind === newTrack.kind,
+    let sender = senders.find(
+      (s) =>
+        (oldTrack && s.track === oldTrack) ||
+        (s.track && s.track.kind === newTrack.kind),
     );
+
+    if (!sender) {
+      sender = senders.find(
+        (s) => !s.track || s.track.kind === newTrack.kind,
+      );
+    }
+
     if (sender) {
+      console.log(`[PeerProvider] Replacing ${newTrack.kind} track on sender`, sender);
       await sender.replaceTrack(newTrack);
+    } else {
+      console.warn(`[PeerProvider] No sender found for ${newTrack.kind} track`);
     }
   }
 

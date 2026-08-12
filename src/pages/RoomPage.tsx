@@ -57,14 +57,17 @@ export default function RoomPage() {
 
   // Get local media using selected device IDs
   const startStream = useCallback(async () => {
+    const targetAudioId = selectedAudioId || initialAudioId;
+    const targetVideoId = selectedVideoId || initialVideoId;
+
     const audioConstraints = {
-      deviceId: selectedAudioId ? { ideal: selectedAudioId } : undefined,
+      deviceId: targetAudioId ? { ideal: targetAudioId } : undefined,
       echoCancellation: true,
       noiseSuppression: true,
       autoGainControl: true,
     };
-    const videoConstraints = selectedVideoId
-      ? { deviceId: { ideal: selectedVideoId } }
+    const videoConstraints = targetVideoId
+      ? { deviceId: { ideal: targetVideoId } }
       : true;
 
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -82,7 +85,7 @@ export default function RoomPage() {
     myStreamRef.current = stream;
     setMyStream(stream);
     return stream;
-  }, [selectedAudioId, selectedVideoId, initialMic, initialCamera]);
+  }, [selectedAudioId, selectedVideoId, initialAudioId, initialVideoId, initialMic, initialCamera]);
 
   // Handle active audio (microphone) hardware device change mid-call
   const handleSelectAudioDevice = useCallback(
@@ -106,9 +109,10 @@ export default function RoomPage() {
 
         const oldAudioTrack = myStreamRef.current.getAudioTracks()[0];
         if (oldAudioTrack) {
+          // Replace track on peer connection BEFORE stopping the old track
+          await replaceTrack(oldAudioTrack, newAudioTrack);
           myStreamRef.current.removeTrack(oldAudioTrack);
           oldAudioTrack.stop();
-          await replaceTrack(oldAudioTrack, newAudioTrack);
         }
 
         myStreamRef.current.addTrack(newAudioTrack);
@@ -128,7 +132,7 @@ export default function RoomPage() {
 
       try {
         const newStream = await navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { exact: newVideoId } },
+          video: { deviceId: { ideal: newVideoId } },
         });
         const newVideoTrack = newStream.getVideoTracks()[0];
         if (!newVideoTrack) return;
@@ -137,9 +141,10 @@ export default function RoomPage() {
 
         const oldVideoTrack = myStreamRef.current.getVideoTracks()[0];
         if (oldVideoTrack) {
+          // Replace track on peer connection BEFORE stopping the old track
+          await replaceTrack(oldVideoTrack, newVideoTrack);
           myStreamRef.current.removeTrack(oldVideoTrack);
           oldVideoTrack.stop();
-          await replaceTrack(oldVideoTrack, newVideoTrack);
         }
 
         myStreamRef.current.addTrack(newVideoTrack);
