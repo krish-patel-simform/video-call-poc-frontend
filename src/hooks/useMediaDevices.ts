@@ -17,7 +17,24 @@ export function useMediaDevices() {
   const enumerateDevices = useCallback(async () => {
     try {
       if (!navigator.mediaDevices?.enumerateDevices) return;
-      const devices = await navigator.mediaDevices.enumerateDevices();
+
+      let devices = await navigator.mediaDevices.enumerateDevices();
+
+      // Check if labels are empty (browser permission not granted yet).
+      // Prompt temporary permission so browser returns actual microphone names & unique device IDs.
+      const hasLabels = devices.some((d) => Boolean(d.label));
+      if (!hasLabels && navigator.mediaDevices.getUserMedia) {
+        try {
+          const tempStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+            video: true,
+          });
+          tempStream.getTracks().forEach((t) => t.stop());
+          devices = await navigator.mediaDevices.enumerateDevices();
+        } catch {
+          // Fall back to available basic list if permission prompt is dismissed
+        }
+      }
 
       const mics = devices
         .filter((d) => d.kind === "audioinput")
@@ -59,21 +76,15 @@ export function useMediaDevices() {
   }, [selectedAudioId, selectedVideoId, selectedOutputId]);
 
   useEffect(() => {
-    function callEnumerableDevices() {
+    enumerateDevices();
+
+    const handleDeviceChange = () => {
       enumerateDevices();
-    }
+    };
 
-    callEnumerableDevices();
-
-    navigator.mediaDevices?.addEventListener(
-      "devicechange",
-      callEnumerableDevices,
-    );
+    navigator.mediaDevices?.addEventListener("devicechange", handleDeviceChange);
     return () => {
-      navigator.mediaDevices?.removeEventListener(
-        "devicechange",
-        callEnumerableDevices,
-      );
+      navigator.mediaDevices?.removeEventListener("devicechange", handleDeviceChange);
     };
   }, [enumerateDevices]);
 

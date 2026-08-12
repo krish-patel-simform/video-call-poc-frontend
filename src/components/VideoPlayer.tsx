@@ -6,6 +6,7 @@ interface VideoPlayerProps {
   muted?: boolean;
   isCameraOn?: boolean;
   displayName?: string;
+  selectedOutputId?: string;
 }
 
 export function VideoPlayer({
@@ -13,6 +14,7 @@ export function VideoPlayer({
   muted = false,
   isCameraOn = true,
   displayName = "User",
+  selectedOutputId,
 }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -28,6 +30,23 @@ export function VideoPlayer({
       }
     }
   }, [stream, hasActiveVideo]);
+
+  // Handle speaker / audio output device routing if supported by browser
+  useEffect(() => {
+    if (
+      videoRef.current &&
+      selectedOutputId &&
+      "setSinkId" in videoRef.current
+    ) {
+      (
+        videoRef.current as HTMLVideoElement & {
+          setSinkId: (id: string) => Promise<void>;
+        }
+      )
+        .setSinkId(selectedOutputId)
+        .catch((err) => console.warn("[VideoPlayer] setSinkId error:", err));
+    }
+  }, [selectedOutputId]);
 
   if (!stream) {
     return (

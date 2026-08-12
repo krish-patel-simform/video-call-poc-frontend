@@ -57,11 +57,14 @@ export default function RoomPage() {
 
   // Get local media using selected device IDs
   const startStream = useCallback(async () => {
-    const audioConstraints = selectedAudioId
-      ? { deviceId: { exact: selectedAudioId } }
-      : true;
+    const audioConstraints = {
+      deviceId: selectedAudioId ? { ideal: selectedAudioId } : undefined,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    };
     const videoConstraints = selectedVideoId
-      ? { deviceId: { exact: selectedVideoId } }
+      ? { deviceId: { ideal: selectedVideoId } }
       : true;
 
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -89,7 +92,12 @@ export default function RoomPage() {
 
       try {
         const newStream = await navigator.mediaDevices.getUserMedia({
-          audio: { deviceId: { exact: newAudioId } },
+          audio: {
+            deviceId: { ideal: newAudioId },
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
         });
         const newAudioTrack = newStream.getAudioTracks()[0];
         if (!newAudioTrack) return;
