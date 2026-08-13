@@ -111,10 +111,16 @@ export default function RoomPage() {
       echoCancellation: true,
       noiseSuppression: true,
       autoGainControl: true,
-      ...(targetAudioId ? { deviceId: { exact: targetAudioId } } : {}),
+      // Use `ideal` (not `exact`) here because the device ID may have been captured
+      // on the Home page before the browser granted full media permissions, making it
+      // a placeholder ID that no longer matches real hardware. `ideal` gives a
+      // best-effort match and silently falls back to the default mic on mismatch.
+      // Live switching (handleSelectAudioDevice) uses `exact` because the ID always
+      // comes from a freshly-enumerated, permission-granted device list.
+      ...(targetAudioId ? { deviceId: { ideal: targetAudioId } } : {}),
     };
     const videoConstraints: MediaTrackConstraints | boolean = targetVideoId
-      ? { deviceId: { exact: targetVideoId } }
+      ? { deviceId: { ideal: targetVideoId } }
       : true;
 
     const stream = await navigator.mediaDevices.getUserMedia({
