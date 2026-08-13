@@ -108,15 +108,16 @@ export default function RoomPage() {
     console.log("[RoomPage] startStream — using video device:", targetVideoId || "browser default");
 
     const audioConstraints: MediaTrackConstraints = {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-      // Use `ideal` (not `exact`) here because the device ID may have been captured
-      // on the Home page before the browser granted full media permissions, making it
-      // a placeholder ID that no longer matches real hardware. `ideal` gives a
-      // best-effort match and silently falls back to the default mic on mismatch.
-      // Live switching (handleSelectAudioDevice) uses `exact` because the ID always
-      // comes from a freshly-enumerated, permission-granted device list.
+      // Use { ideal: true } instead of plain `true` for audio processing flags.
+      // A plain boolean is treated as a REQUIRED constraint in Safari — if the
+      // browser doesn't support noiseSuppression or autoGainControl it throws
+      // OverconstrainedError. { ideal: true } makes them best-effort: applied when
+      // supported, silently skipped when not (Chrome, Firefox, Safari all safe).
+      echoCancellation: { ideal: true },
+      noiseSuppression: { ideal: true },
+      autoGainControl: { ideal: true },
+      // Use `ideal` for deviceId here too — pre-permission IDs may be placeholder
+      // strings that don't match real hardware after permission is granted.
       ...(targetAudioId ? { deviceId: { ideal: targetAudioId } } : {}),
     };
     const videoConstraints: MediaTrackConstraints | boolean = targetVideoId
@@ -161,9 +162,9 @@ export default function RoomPage() {
         const newStream = await navigator.mediaDevices.getUserMedia({
           audio: {
             deviceId: { exact: newAudioId },
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
+            echoCancellation: { ideal: true },
+            noiseSuppression: { ideal: true },
+            autoGainControl: { ideal: true },
           },
         });
         const newAudioTrack = newStream.getAudioTracks()[0];
