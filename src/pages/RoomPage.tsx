@@ -15,8 +15,9 @@ export default function RoomPage() {
   const email = location.state?.email as string | undefined;
   const initialMic = (location.state?.initialMic as boolean | undefined) ?? true;
   const initialCamera = (location.state?.initialCamera as boolean | undefined) ?? true;
-  const initialAudioId = location.state?.selectedAudioId as string | undefined;
-  const initialVideoId = location.state?.selectedVideoId as string | undefined;
+  // Device IDs selected on the Home page before joining
+  const initialAudioId = (location.state?.selectedAudioId as string | undefined) ?? "";
+  const initialVideoId = (location.state?.selectedVideoId as string | undefined) ?? "";
 
   const { socket } = useSocket();
   const {
@@ -30,6 +31,8 @@ export default function RoomPage() {
     addIceCandidate,
   } = usePeer();
 
+  // Pass initial device IDs so useMediaDevices seeds its state/refs correctly.
+  // This eliminates the async race where enumerateDevices would overwrite the user's choice.
   const {
     audioInputs,
     videoInputs,
@@ -40,13 +43,39 @@ export default function RoomPage() {
     setSelectedAudioId,
     setSelectedVideoId,
     setSelectedOutputId,
-  } = useMediaDevices();
+  } = useMediaDevices(initialAudioId, initialVideoId);
 
-  // Sync initial passed device IDs from Home page if available
+  /**
+   * activeAudioIdRef / activeVideoIdRef
+   *
+   * These refs are the single source of truth for which hardware device is
+   * currently IN USE (or will be used on the next startStream call).
+   *
+   * WHY REFS, NOT STATE:
+   *   startStream is wrapped in useCallback and is used inside handleNewUserJoined
+   *   and handleIncommingCall. Those handlers are registered as socket listeners.
+   *   If startStream depended on React state for device IDs, it would capture a
+   *   stale value from the render at registration time. Refs are always current.
+   *
+   * Initialised directly from location.state so the value is ready synchronously
+   * before any effect or socket event fires.
+   */
+  const activeAudioIdRef = useRef<string>(initialAudioId);
+  const activeVideoIdRef = useRef<string>(initialVideoId);
+
+  // Keep activeAudioIdRef / activeVideoIdRef in sync with the dropdown selection.
+  // This is safe because both state and ref stay aligned from this point on.
   useEffect(() => {
-    if (initialAudioId) setSelectedAudioId(initialAudioId);
-    if (initialVideoId) setSelectedVideoId(initialVideoId);
-  }, [initialAudioId, initialVideoId, setSelectedAudioId, setSelectedVideoId]);
+    if (selectedAudioId) {
+      activeAudioIdRef.current = selectedAudioId;
+    }
+  }, [selectedAudioId]);
+
+  useEffect(() => {
+    if (selectedVideoId) {
+      activeVideoIdRef.current = selectedVideoId;
+    }
+  }, [selectedVideoId]);
 
   const [myStream, setMyStream] = useState<MediaStream | null>(null);
   const [isMicOn, setIsMicOn] = useState<boolean>(initialMic);
@@ -54,20 +83,38 @@ export default function RoomPage() {
 
   const myStreamRef = useRef<MediaStream | null>(null);
   const remoteEmailRef = useRef<string | null>(null);
+  // Separate ref for isMicOn so handleSelectAudioDevice always reads the current value
+  const isMicOnRef = useRef<boolean>(initialMic);
 
-  // Get local media using selected device IDs
+  // Keep isMicOnRef synced
+  useEffect(() => {
+    isMicOnRef.current = isMicOn;
+  }, [isMicOn]);
+
+  /**
+   * startStream — acquires local camera + microphone.
+   *
+   * Reads device IDs from refs (not state) so the correct device is always
+   * used regardless of when this callback was captured in a closure.
+   *
+   * Deliberately has NO device-ID state in its deps — only initialMic/initialCamera
+   * (from location.state, which never changes for the lifetime of this component).
+   */
   const startStream = useCallback(async () => {
-    const targetAudioId = selectedAudioId || initialAudioId;
-    const targetVideoId = selectedVideoId || initialVideoId;
+    const targetAudioId = activeAudioIdRef.current;
+    const targetVideoId = activeVideoIdRef.current;
 
-    const audioConstraints = {
-      deviceId: targetAudioId ? { ideal: targetAudioId } : undefined,
+    console.log("[RoomPage] startStream — using audio device:", targetAudioId || "browser default");
+    console.log("[RoomPage] startStream — using video device:", targetVideoId || "browser default");
+
+    const audioConstraints: MediaTrackConstraints = {
       echoCancellation: true,
       noiseSuppression: true,
       autoGainControl: true,
+      ...(targetAudioId ? { deviceId: { exact: targetAudioId } } : {}),
     };
-    const videoConstraints = targetVideoId
-      ? { deviceId: { ideal: targetVideoId } }
+    const videoConstraints: MediaTrackConstraints | boolean = targetVideoId
+      ? { deviceId: { exact: targetVideoId } }
       : true;
 
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -85,70 +132,101 @@ export default function RoomPage() {
     myStreamRef.current = stream;
     setMyStream(stream);
     return stream;
-  }, [selectedAudioId, selectedVideoId, initialAudioId, initialVideoId, initialMic, initialCamera]);
+  }, [initialMic, initialCamera]); // Stable — device IDs read from refs at call time
 
-  // Handle active audio (microphone) hardware device change mid-call
+  /**
+   * handleSelectAudioDevice — switches microphone mid-call.
+   *
+   * 1. Update the ref FIRST so any concurrent startStream calls pick up the new device.
+   * 2. Acquire the new audio track with { exact: deviceId } — no silent fallback.
+   * 3. Replace the track on the WebRTC sender BEFORE stopping the old track
+   *    (stopping first would null out sender.track, making replacement fail).
+   * 4. Stop the old track after replacement to release hardware.
+   */
   const handleSelectAudioDevice = useCallback(
     async (newAudioId: string) => {
+      // Commit immediately to both ref and UI state
+      activeAudioIdRef.current = newAudioId;
       setSelectedAudioId(newAudioId);
+
       if (!myStreamRef.current) return;
 
       try {
         const newStream = await navigator.mediaDevices.getUserMedia({
           audio: {
-            deviceId: { ideal: newAudioId },
+            deviceId: { exact: newAudioId },
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
           },
         });
         const newAudioTrack = newStream.getAudioTracks()[0];
-        if (!newAudioTrack) return;
-
-        newAudioTrack.enabled = isMicOn;
-
-        const oldAudioTrack = myStreamRef.current.getAudioTracks()[0];
-        if (oldAudioTrack) {
-          // Replace track on peer connection BEFORE stopping the old track
-          await replaceTrack(oldAudioTrack, newAudioTrack);
-          myStreamRef.current.removeTrack(oldAudioTrack);
-          oldAudioTrack.stop();
+        if (!newAudioTrack) {
+          console.error("[RoomPage] No audio track returned for device:", newAudioId);
+          return;
         }
 
+        newAudioTrack.enabled = isMicOnRef.current;
+
+        const oldAudioTrack = myStreamRef.current.getAudioTracks()[0];
+
+        // Step 1: Replace on WebRTC peer connection (old track must still be live)
+        await replaceTrack(newAudioTrack);
+
+        // Step 2: Swap track on the local MediaStream
+        if (oldAudioTrack) {
+          myStreamRef.current.removeTrack(oldAudioTrack);
+          oldAudioTrack.stop(); // Release hardware AFTER replace
+        }
         myStreamRef.current.addTrack(newAudioTrack);
+
+        // Trigger re-render of local preview
         setMyStream(new MediaStream(myStreamRef.current.getTracks()));
+
+        console.log("[RoomPage] Switched microphone to:", newAudioTrack.label);
       } catch (err) {
         console.error("[RoomPage] Error switching audio device:", err);
       }
     },
-    [isMicOn, replaceTrack, setSelectedAudioId]
+    [replaceTrack, setSelectedAudioId]
   );
 
-  // Handle active video (camera) hardware device change mid-call
+  /**
+   * handleSelectVideoDevice — switches camera mid-call.
+   * Same safety ordering as handleSelectAudioDevice: replace then stop.
+   */
   const handleSelectVideoDevice = useCallback(
     async (newVideoId: string) => {
+      activeVideoIdRef.current = newVideoId;
       setSelectedVideoId(newVideoId);
+
       if (!myStreamRef.current) return;
 
       try {
         const newStream = await navigator.mediaDevices.getUserMedia({
-          video: { deviceId: { ideal: newVideoId } },
+          video: { deviceId: { exact: newVideoId } },
         });
         const newVideoTrack = newStream.getVideoTracks()[0];
-        if (!newVideoTrack) return;
+        if (!newVideoTrack) {
+          console.error("[RoomPage] No video track returned for device:", newVideoId);
+          return;
+        }
 
         newVideoTrack.enabled = isCameraOn;
 
         const oldVideoTrack = myStreamRef.current.getVideoTracks()[0];
+
+        await replaceTrack(newVideoTrack);
+
         if (oldVideoTrack) {
-          // Replace track on peer connection BEFORE stopping the old track
-          await replaceTrack(oldVideoTrack, newVideoTrack);
           myStreamRef.current.removeTrack(oldVideoTrack);
           oldVideoTrack.stop();
         }
-
         myStreamRef.current.addTrack(newVideoTrack);
+
         setMyStream(new MediaStream(myStreamRef.current.getTracks()));
+
+        console.log("[RoomPage] Switched camera to:", newVideoTrack.label);
       } catch (err) {
         console.error("[RoomPage] Error switching video device:", err);
       }

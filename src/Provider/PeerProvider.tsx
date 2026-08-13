@@ -53,28 +53,23 @@ export default function PeerProvider({ children }: PropsWithChildren) {
     }
   }
 
-  async function replaceTrack(
-    oldTrack: MediaStreamTrack | null,
-    newTrack: MediaStreamTrack,
-  ) {
+  /**
+   * Replaces an existing track on the active RTCPeerConnection.
+   *
+   * Sender is resolved strictly by track kind ('audio' or 'video').
+   * This must be called BEFORE stopping the old track — once a track is stopped,
+   * `sender.track` becomes null and the sender can no longer be matched by reference.
+   */
+  async function replaceTrack(newTrack: MediaStreamTrack) {
     const senders = peer.getSenders();
-    let sender = senders.find(
-      (s) =>
-        (oldTrack && s.track === oldTrack) ||
-        (s.track && s.track.kind === newTrack.kind),
+    const sender = senders.find(
+      (s) => s.track !== null && s.track.kind === newTrack.kind,
     );
-
-    if (!sender) {
-      sender = senders.find(
-        (s) => !s.track || s.track.kind === newTrack.kind,
-      );
-    }
-
     if (sender) {
-      console.log(`[PeerProvider] Replacing ${newTrack.kind} track on sender`, sender);
+      console.log(`[PeerProvider] Replacing ${newTrack.kind} track`);
       await sender.replaceTrack(newTrack);
     } else {
-      console.warn(`[PeerProvider] No sender found for ${newTrack.kind} track`);
+      console.warn(`[PeerProvider] No active sender found for ${newTrack.kind} track`);
     }
   }
 
