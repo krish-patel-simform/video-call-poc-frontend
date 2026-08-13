@@ -264,8 +264,14 @@ export default function RoomPage() {
       const stream = myStreamRef.current ?? (await startStream());
       await sendStream(stream);
 
-      const answer = await createAnswer(offer);
-      socket?.emit("call-accepted", { emailId: fromUserEmail, answer });
+      try {
+        const answer = await createAnswer(offer);
+        socket?.emit("call-accepted", { emailId: fromUserEmail, answer });
+      } catch (err) {
+        // This fires if createAnswer is called while the peer is already past
+        // have-remote-offer state (e.g., a duplicate socket event). Log and ignore.
+        console.warn("[RoomPage] handleIncommingCall: duplicate or late offer — ignoring.", err);
+      }
     },
     [createAnswer, socket, startStream, sendStream]
   );
