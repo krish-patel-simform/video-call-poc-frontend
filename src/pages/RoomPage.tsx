@@ -108,26 +108,46 @@ export default function RoomPage() {
     console.log("[RoomPage] startStream — using video device:", targetVideoId || "browser default");
 
     const audioConstraints: MediaTrackConstraints = {
-      // Use { ideal: true } instead of plain `true` for audio processing flags.
-      // A plain boolean is treated as a REQUIRED constraint in Safari — if the
-      // browser doesn't support noiseSuppression or autoGainControl it throws
-      // OverconstrainedError. { ideal: true } makes them best-effort: applied when
-      // supported, silently skipped when not (Chrome, Firefox, Safari all safe).
+      // { ideal: true } — best-effort, never causes OverconstrainedError.
+      // Plain `true` is treated as required on Safari and throws if unsupported.
       echoCancellation: { ideal: true },
       noiseSuppression: { ideal: true },
       autoGainControl: { ideal: true },
-      // Use `ideal` for deviceId here too — pre-permission IDs may be placeholder
-      // strings that don't match real hardware after permission is granted.
       ...(targetAudioId ? { deviceId: { ideal: targetAudioId } } : {}),
     };
     const videoConstraints: MediaTrackConstraints | boolean = targetVideoId
       ? { deviceId: { ideal: targetVideoId } }
       : true;
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: audioConstraints,
-      video: videoConstraints,
-    });
+    let stream: MediaStream;
+    try {
+      // Attempt 1: use preferred device IDs and audio-processing hints
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: audioConstraints,
+        video: videoConstraints,
+      });
+      console.log("[RoomPage] startStream — acquired stream with specific constraints");
+    } catch (firstErr) {
+      // Attempt 2: some browsers/environments (Safari, BrowserStack virtual devices,
+      // hardware without a microphone) reject even ideal constraints. Fall back to
+      // the simplest possible call so the video side always comes up.
+      console.warn(
+        "[RoomPage] startStream — constrained getUserMedia failed, retrying with bare defaults:",
+        firstErr,
+      );
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+        console.log("[RoomPage] startStream — acquired stream with default constraints");
+      } catch (secondErr) {
+        // Last resort: if audio is unavailable (e.g., no mic on device), try video only
+        console.warn(
+          "[RoomPage] startStream — audio+video failed, falling back to video only:",
+          secondErr,
+        );
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+        console.log("[RoomPage] startStream — acquired video-only stream");
+      }
+    }
 
     stream.getAudioTracks().forEach((track) => {
       track.enabled = initialMic;
@@ -140,6 +160,7 @@ export default function RoomPage() {
     setMyStream(stream);
     return stream;
   }, [initialMic, initialCamera]); // Stable — device IDs read from refs at call time
+
 
   /**
    * handleSelectAudioDevice — switches microphone mid-call.
