@@ -7,7 +7,7 @@ function App() {
   return (
     <Socketprovider>
       <PeerProvider>
-        <RoutesProvider />;
+        <RoutesProvider />
       </PeerProvider>
     </Socketprovider>
   );
